@@ -6,7 +6,7 @@
 # from langgraph.graph import StateGraph
 # from langgraph.graph.message import add_messages
 
-# os.environ["GOOGLE_API_KEY"] = "AIzaSyDhQMp9kkEbFzU7J0qHeLQjRjz9g9fbWHE"
+# os.environ["GOOGLE_API_KEY"] = ""
 # llm = init_chat_model("google_genai:gemini-2.0-flash")
 
 # class State(TypedDict):

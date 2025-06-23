@@ -10,10 +10,10 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.messages import ToolMessage, HumanMessage, AnyMessage, AIMessage
 from langchain_core.tools import InjectedToolCallId, tool
 
-from langchain_community.tools import DuckDuckGoSearchResults
+from langchain_community.tools import DuckDuckGoSearchRun
 from src.prompts import get_prompt
 
-os.environ["GOOGLE_API_KEY"] = "AIzaSyDhQMp9kkEbFzU7J0qHeLQjRjz9g9fbWHE"
+os.environ["GOOGLE_API_KEY"] = "..."
 
 class State(TypedDict):
     question: str
@@ -28,7 +28,7 @@ class State(TypedDict):
 
 
 # Create the web search tool properly
-web_search_tool = DuckDuckGoSearchResults()
+web_search_tool = DuckDuckGoSearchRun()
 
 # Define tools list with the proper tool instance
 tools = [web_search_tool]
@@ -54,6 +54,7 @@ def planner(state):
     execution_plan_msg = llm.invoke(messages)
 
     execution_plan = execution_plan_msg.content
+    print(f"Execution Plan: {execution_plan}")
     return {"execution_plan": execution_plan, "current_step": "Step 1"}
 
 def executor(state):
@@ -86,7 +87,7 @@ def executor(state):
     next_step = current_step  # For now, keep the same step until verificator decides to move on
     
     print(f"Executed: {current_step}")
-    print(f"Messages: {messages}")
+    print(f"Messages: {messages[-1].content}")
     return {"messages": messages, "execution_results": execution_results, "current_step": next_step}
 
 def verificator(state):
@@ -186,7 +187,7 @@ graph_builder.add_edge("synthesizer", END)
 graph = graph_builder.compile()
 
 def main():
-    result = graph.invoke({"question" : "Who painted the mona lisa?"})
+    result = graph.invoke({"question" : "How many studio albums were published by Mercedes Sosa between 2000 and 2009 (included)? You can use the latest 2022 version of english wikipedia."})
     final_answer = result["final_answer"]
     print(final_answer)
 
