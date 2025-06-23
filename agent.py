@@ -1,4 +1,4 @@
-import os
+from dotenv import load_dotenv
 from typing import Annotated, Dict, Any, List
 from langchain.chat_models import init_chat_model
 
@@ -10,10 +10,14 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.messages import ToolMessage, HumanMessage, AnyMessage, AIMessage
 from langchain_core.tools import InjectedToolCallId, tool
 
-from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.tools import DuckDuckGoSearchResults
+from langchain_community.document_loaders import PlaywrightURLLoader
+from bs4 import BeautifulSoup
+import json
+
 from src.prompts import get_prompt
 
-os.environ["GOOGLE_API_KEY"] = "..."
+load_dotenv()
 
 class State(TypedDict):
     question: str
@@ -27,11 +31,111 @@ class State(TypedDict):
     error: str
 
 
-# Create the web search tool properly
-web_search_tool = DuckDuckGoSearchRun()
+@tool
+def structured_web_page_extractor(url: str, selectors: str = None, timeout: int = 10, headless: bool = True) -> str:
+    """
+    Extracts structured data from a web page using Playwright.
+    
+    Parameters:
+        url (str): The URL of the web page to extract data from.
+        selectors (str, optional): JSON string of CSS selectors for elements to extract. Example: '{"table": ".wikitable", "list": "ul.special-list"}'
+        timeout (int, optional): Max seconds to wait for page load. Default is 10.
+        headless (bool, optional): Run browser in headless mode. Default is True.
+    
+    Returns:
+        str: JSON string containing extracted data with tables, lists, and raw HTML.
+    """
+    try:
+        # Parse selectors if provided
+        selector_dict = {}
+        if selectors:
+            try:
+                selector_dict = json.loads(selectors)
+            except json.JSONDecodeError:
+                selector_dict = {}
+        
+        # Load the page with Playwright
+        loader = PlaywrightURLLoader(
+            urls=[url],
+            continue_on_failure=False,
+            headless=headless
+        )
+        
+        # Get the page content
+        docs = loader.load()
+        if not docs:
+            return json.dumps({"error": "Failed to load page content"})
+        
+        html_content = docs[0].page_content
+        
+        # Parse HTML with BeautifulSoup
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Extract tables
+        tables = []
+        table_selectors = selector_dict.get('table', 'table')
+        if isinstance(table_selectors, str):
+            table_selectors = [table_selectors]
+        
+        for selector in table_selectors:
+            found_tables = soup.select(selector)
+            for table in found_tables:
+                table_data = []
+                rows = table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all(['td', 'th'])
+                    if cells:
+                        row_data = [cell.get_text(strip=True) for cell in cells]
+                        table_data.append(row_data)
+                if table_data:
+                    tables.append(table_data)
+        
+        # Extract lists
+        lists = []
+        list_selectors = selector_dict.get('list', 'ul, ol')
+        if isinstance(list_selectors, str):
+            list_selectors = [list_selectors]
+        
+        for selector in list_selectors:
+            found_lists = soup.select(selector)
+            for list_elem in found_lists:
+                list_items = list_elem.find_all('li')
+                if list_items:
+                    list_data = [item.get_text(strip=True) for item in list_items]
+                    lists.append(list_data)
+        
+        # Extract specific elements if selectors provided
+        specific_elements = {}
+        for key, selector in selector_dict.items():
+            if key not in ['table', 'list']:
+                elements = soup.select(selector)
+                specific_elements[key] = [elem.get_text(strip=True) for elem in elements]
+        
+        # Prepare result
+        result = {
+            "tables": tables,
+            "lists": lists,
+            "specific_elements": specific_elements,
+            "url": url,
+            "status": "success"
+        }
+        
+        return json.dumps(result, indent=2)
+        
+    except Exception as e:
+        return json.dumps({"error": f"Failed to extract data: {str(e)}", "url": url})
 
-# Define tools list with the proper tool instance
-tools = [web_search_tool]
+
+# Create the web search tool properly
+web_search_tool = DuckDuckGoSearchResults()
+web_search_tool.description = "Search the web for current information using DuckDuckGo"
+
+# Create the web page extractor tool
+web_page_extractor_tool = structured_web_page_extractor
+web_page_extractor_tool.description = "Extract structured data (tables, lists) from web pages using Playwright"
+
+# Define tools list with the proper tool instances
+tools = [web_search_tool, web_page_extractor_tool]
 
 
 llm_init = init_chat_model("google_genai:gemini-2.0-flash")
@@ -155,12 +259,9 @@ def synthesizer(state):
     final_answer = final_answer_msg.content
     return {"final_answer": final_answer}
 
-# The first argument is the unique node name
-# The second argument is the function or object that will be called whenever
-# the node is used.
-# graph_builder.add_node("chatbot", chatbot)
 tool_node = ToolNode(tools=tools)
 graph_builder.add_node("tools", tool_node)
+
 graph_builder.add_node("planner", planner)
 graph_builder.add_node("executor", executor)
 graph_builder.add_node("verificator", verificator)
@@ -168,7 +269,6 @@ graph_builder.add_node("synthesizer", synthesizer)
 
 
 graph_builder.add_edge(START, "planner")
-# graph_builder.add_edge("chatbot", "planner")
 graph_builder.add_edge("planner", "executor")
 graph_builder.add_conditional_edges("executor", tools_condition)
 graph_builder.add_edge("executor", "verificator")

@@ -5,3 +5,7 @@ langchain-community>=0.3.26
 duckduckgo-search>=4.0.0
 numexpr>=2.11.0
 langchain_tavily>=0.2.3
+python-dotenv>=1.1.0
+beautifulsoup4>=4.12.0
+playwright>=1.40.0
+unstructured>=0.17.2

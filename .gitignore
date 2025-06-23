@@ -1,6 +1,7 @@
 # Virtual Environment
 hf-langgraph-model/
 
+langgraph-agent/
 # Environment variables
 .env
 .env.local
