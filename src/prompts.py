@@ -43,6 +43,7 @@ Given a question, you should:
 
 Available tools:
 - web_search: Search the web for current information
+- structured_web_page_extractor: Extracts structured data from a web page
 - calculator: Perform mathematical and statistical computations
 - file_processor: Extract text from PDF, Word, Excel, CSV files and images
 - vision_analyzer: Analyze images, charts, and visual content
