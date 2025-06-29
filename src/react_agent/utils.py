@@ -21,7 +21,14 @@ def load_chat_model(fully_specified_name: str) -> BaseChatModel:
     """Load a chat model from a fully specified name.
 
     Args:
-        fully_specified_name (str): String in the format 'provider/model'.
+        fully_specified_name (str): String in the format 'provider/model' or 'provider:model'.
     """
-    provider, model = fully_specified_name.split("/", maxsplit=1)
+    # Handle both colon and slash separators
+    if ":" in fully_specified_name:
+        provider, model = fully_specified_name.split(":", maxsplit=1)
+    elif "/" in fully_specified_name:
+        provider, model = fully_specified_name.split("/", maxsplit=1)
+    else:
+        raise ValueError(f"Model name '{fully_specified_name}' must contain either ':' or '/' separator")
+    
     return init_chat_model(model, model_provider=provider)
