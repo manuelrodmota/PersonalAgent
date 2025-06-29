@@ -12,21 +12,39 @@ import gradio as gr
 import requests
 import inspect
 import pandas as pd
+import json
 
 # (Keep Constants as is)
 # --- Constants ---
 DEFAULT_API_URL = "https://agents-course-unit4-scoring.hf.space"
+CACHE_FILE = "answer_cache.json"
 
-# --- Basic Agent Definition ---
-# ----- THIS IS WERE YOU CAN BUILD WHAT YOU WANT ------
-class BasicAgent:
-    def __init__(self):
-        print("BasicAgent initialized.")
-    def __call__(self, question: str) -> str:
-        print(f"Agent received question (first 50 chars): {question[:50]}...")
-        fixed_answer = "This is a default answer."
-        print(f"Agent returning fixed answer: {fixed_answer}")
-        return fixed_answer
+def load_cache():
+    """Load cached answers from JSON file."""
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error loading cache: {e}")
+    return {}
+
+def save_cache(cache):
+    """Save cached answers to JSON file."""
+    try:
+        with open(CACHE_FILE, 'w') as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        print(f"Error saving cache: {e}")
+
+def get_cached_answer(task_id, cache):
+    """Get cached answer for a task_id if it exists."""
+    return cache.get(str(task_id))
+
+def cache_answer(task_id, answer, cache):
+    """Cache an answer for a task_id."""
+    cache[str(task_id)] = answer
+    save_cache(cache)
 
 def run_and_submit_all( profile: gr.OAuthProfile | None):
     """
@@ -36,12 +54,12 @@ def run_and_submit_all( profile: gr.OAuthProfile | None):
     # --- Determine HF Space Runtime URL and Repo URL ---
     space_id = "12345678" #os.getenv("SPACE_ID") # Get the SPACE_ID for sending link to the code
 
-    # if profile:
-    #     username= f"{profile.username}"
-    #     print(f"User logged in: {username}")
-    # else:
-    #     print("User not logged in.")
-    #     return "Please Login to Hugging Face with the button.", None
+    if profile:
+        username= f"{profile.username}"
+        print(f"User logged in: {username}")
+    else:
+        print("User not logged in.")
+        return "Please Login to Hugging Face with the button.", None
     username="testing-user"
 
     api_url = DEFAULT_API_URL
@@ -83,6 +101,11 @@ def run_and_submit_all( profile: gr.OAuthProfile | None):
     results_log = []
     answers_payload = []
     print(f"Running agent on {len(questions_data)} questions...")
+    
+    # Load cache once at the beginning
+    cache = load_cache()
+    print(f"Loaded cache with {len(cache)} cached answers")
+    
     for item in questions_data:
         task_id = item.get("task_id")
         question_text = item.get("question")
@@ -91,18 +114,32 @@ def run_and_submit_all( profile: gr.OAuthProfile | None):
             print(f"Skipping item with missing task_id or question: {item}")
             continue
         try:
-            if question_file is not None:
+            if question_file:
                 question_text += f" ./files/{question_file}"
-            submitted_answer = asyncio.run( agent(question_text) )
+            
+            # Check cache first
+            cached_answer = get_cached_answer(task_id, cache)
+            if cached_answer:
+                print(f"Using cached answer for task {task_id}")
+                submitted_answer = cached_answer
+            else:
+                print(f"Generating new answer for task {task_id}")
+                submitted_answer = asyncio.run(agent(question_text))
+                # Cache the new answer
+                cache_answer(task_id, submitted_answer, cache)
+            
             answers_payload.append({"task_id": task_id, "submitted_answer": submitted_answer})
             results_log.append({"Task ID": task_id, "Question": question_text, "Submitted Answer": submitted_answer})
+            print(f"Result logs: {results_log}")
         except Exception as e:
              print(f"Error running agent on task {task_id}: {e}")
              results_log.append({"Task ID": task_id, "Question": question_text, "Submitted Answer": f"AGENT ERROR: {e}"})
 
+    progress = f"Answered {len(results_log)}/{len(questions_data)} questions"
+
     if not answers_payload:
         print("Agent did not produce any answers to submit.")
-        return "Agent did not produce any answers to submit.", pd.DataFrame(results_log)
+        return "Agent did not produce any answers to submit.", pd.DataFrame(results_log), progress
 
     # 4. Prepare Submission 
     submission_data = {"username": username.strip(), "agent_code": agent_code, "answers": answers_payload}
@@ -124,7 +161,7 @@ def run_and_submit_all( profile: gr.OAuthProfile | None):
         )
         print("Submission successful.")
         results_df = pd.DataFrame(results_log)
-        return final_status, results_df
+        return final_status, results_df, progress
     except requests.exceptions.HTTPError as e:
         error_detail = f"Server responded with status {e.response.status_code}."
         try:
@@ -135,22 +172,22 @@ def run_and_submit_all( profile: gr.OAuthProfile | None):
         status_message = f"Submission Failed: {error_detail}"
         print(status_message)
         results_df = pd.DataFrame(results_log)
-        return status_message, results_df
+        return status_message, results_df, progress
     except requests.exceptions.Timeout:
         status_message = "Submission Failed: The request timed out."
         print(status_message)
         results_df = pd.DataFrame(results_log)
-        return status_message, results_df
+        return status_message, results_df, progress
     except requests.exceptions.RequestException as e:
         status_message = f"Submission Failed: Network error - {e}"
         print(status_message)
         results_df = pd.DataFrame(results_log)
-        return status_message, results_df
+        return status_message, results_df, progress
     except Exception as e:
         status_message = f"An unexpected error occurred during submission: {e}"
         print(status_message)
         results_df = pd.DataFrame(results_log)
-        return status_message, results_df
+        return status_message, results_df, progress
 
 
 # --- Build Gradio Interface using Blocks ---
@@ -176,12 +213,12 @@ with gr.Blocks() as demo:
     run_button = gr.Button("Run Evaluation & Submit All Answers")
 
     status_output = gr.Textbox(label="Run Status / Submission Result", lines=5, interactive=False)
-    # Removed max_rows=10 from DataFrame constructor
     results_table = gr.DataFrame(label="Questions and Agent Answers", wrap=True)
+    progress_box = gr.Textbox(label="Progress", interactive=False)
 
     run_button.click(
         fn=run_and_submit_all,
-        outputs=[status_output, results_table]
+        outputs=[status_output, results_table, progress_box]
     )
 
 if __name__ == "__main__":
