@@ -6,6 +6,8 @@ uv.lock
 
 files/
 temp/
+myenv/**
+answer_cache.json
 
 # C extensions
 *.so
